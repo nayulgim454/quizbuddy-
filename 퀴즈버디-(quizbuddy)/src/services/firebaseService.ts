@@ -110,6 +110,7 @@ export const updateUserStatus = async (uid: string, status: UserStatus) => {
 };
 
 export const searchUserByEmail = async (email: string) => {
+  if (!email) return null;
   const q = query(collection(db, "users"), where("email", "==", email), limit(1));
   try {
     const snap = await getDocs(q);
@@ -124,7 +125,7 @@ export const searchUserByEmail = async (email: string) => {
 };
 
 export const addFriend = async (myUid: string, friendUid: string) => {
-  if (myUid === friendUid) return;
+  if (!myUid || !friendUid || myUid === friendUid) return;
   
   // Check if already friends
   const q = query(
@@ -151,42 +152,60 @@ export const addFriend = async (myUid: string, friendUid: string) => {
 };
 
 export const subscribeToFriends = (myUid: string, callback: (friends: UserProfile[]) => void) => {
+  if (!myUid) {
+    callback([]);
+    return () => {};
+  }
   const q = query(collection(db, "friendships"), where("users", "array-contains", myUid));
   
-  return onSnapshot(q, async (snap) => {
+  const userListeners = new Map<string, () => void>();
+  const friendsData = new Map<string, UserProfile>();
+
+  const unsubFriendships = onSnapshot(q, (snap) => {
     const friendUids = snap.docs.map(doc => {
       const data = doc.data() as Friendship;
       return data.users.find(id => id !== myUid);
     }).filter(Boolean) as string[];
 
-    if (friendUids.length === 0) {
-      callback([]);
-      return;
-    }
-
-    // Since we can't easily reactively listen to MANY individual docs with a single collection query on IDs (without 'in' limit)
-    // We'll listen to each friend doc
-    const friends: UserProfile[] = [];
-    const unsubscribers: (() => void)[] = [];
-
-    friendUids.forEach(uid => {
-      const unsub = onSnapshot(doc(db, "users", uid), (userDoc) => {
-        if (userDoc.exists()) {
-          const profile = userDoc.data() as UserProfile;
-          const index = friends.findIndex(f => f.uid === profile.uid);
-          if (index > -1) {
-            friends[index] = profile;
-          } else {
-            friends.push(profile);
-          }
-          callback([...friends]);
-        }
-      });
-      unsubscribers.push(unsub);
+    // Unsubscribe from users no longer in friend list
+    userListeners.forEach((unsub, uid) => {
+      if (!friendUids.includes(uid)) {
+        unsub();
+        userListeners.delete(uid);
+        friendsData.delete(uid);
+      }
     });
 
-    return () => unsubscribers.forEach(u => u());
+    // Subscribe to new friends
+    friendUids.forEach(uid => {
+      if (!userListeners.has(uid)) {
+        const unsub = onSnapshot(doc(db, "users", uid), (userDoc) => {
+          if (userDoc.exists()) {
+            friendsData.set(uid, userDoc.data() as UserProfile);
+            // Sort or filter could be added here if needed
+            callback(Array.from(friendsData.values()));
+          }
+        }, (error) => {
+          if (error.code !== 'resource-exhausted') {
+            console.error(`Error listening to friend ${uid}:`, error);
+          }
+        });
+        userListeners.set(uid, unsub);
+      }
+    });
+
+    if (friendUids.length === 0) {
+      callback([]);
+    }
   }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, "friendships");
+    if (error.code !== 'resource-exhausted') {
+      handleFirestoreError(error, OperationType.LIST, "friendships");
+    }
   });
+
+  return () => {
+    unsubFriendships();
+    userListeners.forEach(unsub => unsub());
+    userListeners.clear();
+  };
 };

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, ChangeEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { generateQuizzes } from "./services/geminiService";
 import { QuizQuestion, UnderstandingLevel, UserProgress, QuestionType, UserProfile, UserStatus } from "./types";
@@ -55,24 +55,39 @@ export default function App() {
   }, [progress]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
+    let profileUnsub: (() => void) | null = null;
+
+    const authUnsub = onAuthStateChanged(auth, (user) => {
       if (user) {
+        // Update status to RESTING when they initially come online (only once)
+        updateUserStatus(user.uid, UserStatus.RESTING);
+
         // Listen to profile updates
-        const profileUnsub = onSnapshot(doc(db, "users", user.uid), (snap) => {
+        profileUnsub = onSnapshot(doc(db, "users", user.uid), (snap) => {
           if (snap.exists()) {
             setCurrentUser(snap.data() as UserProfile);
-            // Update status to RESTING when they come online
-            updateUserStatus(user.uid, UserStatus.RESTING);
+          }
+          setLoadingUser(false);
+        }, (error) => {
+          if (error.code === 'resource-exhausted') {
+            console.warn("Firestore Quota exceeded. Using local state if available.");
           }
           setLoadingUser(false);
         });
-        return () => profileUnsub();
       } else {
+        if (profileUnsub) {
+          profileUnsub();
+          profileUnsub = null;
+        }
         setCurrentUser(null);
         setLoadingUser(false);
       }
     });
-    return () => unsub();
+
+    return () => {
+      authUnsub();
+      if (profileUnsub) profileUnsub();
+    };
   }, []);
 
   const startQuiz = async (selectedTopic: string) => {
@@ -185,7 +200,7 @@ export default function App() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
