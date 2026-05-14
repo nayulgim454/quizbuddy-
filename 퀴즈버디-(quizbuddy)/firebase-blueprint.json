@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with status and metadata",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "status": { "type": "string", "enum": ["learning", "resting", "offline"] },
+        "lastSeen": { "type": "string" }
+      },
+      "required": ["uid", "displayName", "email", "status", "lastSeen"]
+    },
+    "Friendship": {
+      "title": "Friendship Record",
+      "description": "Represents a friendship between two users",
+      "type": "object",
+      "properties": {
+        "users": { "type": "array", "items": { "type": "string" }, "description": "List of two UIDs" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["users", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Primary user profile document"
+    },
+    "/friendships/{friendshipId}": {
+      "schema": "Friendship",
+      "description": "Collection of all mutual friendships"
+    }
+  }
+}

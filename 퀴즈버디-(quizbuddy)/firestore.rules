@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User Profile Validation
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'photoURL', 'status', 'lastSeen']) &&
+             data.keys().size() == 6 &&
+             data.uid == request.auth.uid &&
+             data.displayName is string && data.displayName.size() <= 100 &&
+             data.email is string && data.email.size() <= 100 &&
+             data.photoURL is string && data.photoURL.size() <= 100000 &&
+             data.status in ['learning', 'resting', 'offline'] &&
+             data.lastSeen is string; // Simplified for MVP, usually timestamp
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // Necessary for searching friends by email
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid &&
+                      request.resource.data.email == resource.data.email;
+    }
+
+    // Friendship Validation
+    function isValidFriendship(data) {
+      return data.keys().hasAll(['users', 'createdAt']) &&
+             data.keys().size() == 2 &&
+             data.users is list && data.users.size() == 2 &&
+             request.auth.uid in data.users &&
+             data.users[0] != data.users[1] &&
+             data.createdAt is string;
+    }
+
+    match /friendships/{friendshipId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.users;
+      allow create: if isSignedIn() && isValidFriendship(request.resource.data);
+      allow delete: if isSignedIn() && request.auth.uid in resource.data.users;
+    }
+  }
+}
